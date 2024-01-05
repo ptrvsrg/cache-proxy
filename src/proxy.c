@@ -40,8 +40,7 @@ static int receive_full(int fd, char **data, size_t *data_len);
 static int send_full(int fd, const char *data, size_t data_len);
 static int send_message(int fd, const message_t *message);
 static int receive_and_send_message(int ifd, int ofd, message_t **message);
-static int parse_request(const char *request, size_t request_len, const char **method,
-                         size_t *method_len, const char **host, size_t *host_len);
+static int parse_request(const char *request, size_t request_len, const char **method, size_t *method_len, const char **host, size_t *host_len);
 static int need_cache(const char *method, size_t method_len);
 static int connect_to_remote(char *host, size_t host_len);
 
@@ -51,10 +50,11 @@ struct proxy_t {
     atomic_int running;
 };
 
-typedef struct client_handler_context_t {
+struct client_handler_context_t {
     proxy_t *proxy;
     int client_socket;
-} client_handler_context_t;
+};
+typedef struct client_handler_context_t client_handler_context_t;
 
 proxy_t *proxy_create(int handler_count, time_t cache_expired_time_ms) {
     errno = 0;

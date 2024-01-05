@@ -1,12 +1,13 @@
-#ifndef MULTITHREAD_CACHE_PROXY_CACHE_H
-#define MULTITHREAD_CACHE_PROXY_CACHE_H
+#ifndef CACHE_PROXY_CACHE_H
+#define CACHE_PROXY_CACHE_H
 
 #include <pthread.h>
+
 #include "message.h"
 
 //////// Cache entry ////////
 
-typedef struct cache_entry_t {
+struct cache_entry_t {
     // Request
     char *request;
     size_t request_len;
@@ -16,7 +17,8 @@ typedef struct cache_entry_t {
 
     // Sync
     pthread_rwlock_t lock;
-} cache_entry_t;
+};
+typedef struct cache_entry_t cache_entry_t;
 
 cache_entry_t *cache_entry_create(const char *request, size_t request_len, const message_t *response);
 void cache_entry_destroy(cache_entry_t *entry);
@@ -32,4 +34,4 @@ void cache_add(cache_t *cache, cache_entry_t *entry);
 void cache_delete(cache_t *cache, const char *request, size_t request_len);
 void cache_destroy(cache_t *cache);
 
-#endif // MULTITHREAD_CACHE_PROXY_CACHE_H
+#endif // CACHE_PROXY_CACHE_H

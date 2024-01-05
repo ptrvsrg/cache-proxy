@@ -1,10 +1,10 @@
 #include "thread_pool.h"
 
 #include <errno.h>
+#include <malloc.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "log.h"
@@ -13,13 +13,14 @@ static long id_counter = 0;
 
 static void *executor_routine(void *arg);
 
-typedef struct task_t {
+struct task_t {
     long id;
     void (*routine)(void *arg);
     void *arg;
-} task_t;
+};
+typedef struct task_t task_t;
 
-typedef struct thread_pool_t {
+struct thread_pool_t {
     // Task queue
     task_t *tasks;
     int capacity;
@@ -36,7 +37,7 @@ typedef struct thread_pool_t {
 
     // Termination
     atomic_int shutdown;
-} thread_pool_t;
+};
 
 thread_pool_t * thread_pool_create(int executor_count, int task_queue_capacity) {
     errno = 0;

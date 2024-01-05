@@ -1,5 +1,5 @@
-#ifndef MULTITHREAD_CACHE_PROXY_LOG_H
-#define MULTITHREAD_CACHE_PROXY_LOG_H
+#ifndef CACHE_PROXY_LOG_H
+#define CACHE_PROXY_LOG_H
 
 #define LOG_ALL_TEXT     "ALL"
 #define LOG_TRACE_TEXT   "TRACE"
@@ -29,4 +29,4 @@ void log_warning(const char* format, ...);
 void log_error(const char* format, ...);
 void log_fatal(const char* format, ...);
 
-#endif //MULTITHREAD_CACHE_PROXY_LOG_H
+#endif // CACHE_PROXY_LOG_H

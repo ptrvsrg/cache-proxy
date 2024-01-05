@@ -1,7 +1,7 @@
 #include "cache.h"
 
 #include <errno.h>
-#include <stdlib.h>
+#include <malloc.h>
 #include <string.h>
 
 #include "log.h"
@@ -34,9 +34,6 @@ void cache_entry_destroy(cache_entry_t *entry) {
         free(entry->request);
         entry->request = NULL;
     }
-    if (entry->response != NULL) {
-        free(entry->response);
-        entry->response = NULL;
-    }
+    if (entry->response != NULL) message_destroy(&entry->response);
     free(entry);
 }

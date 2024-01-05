@@ -1,12 +1,12 @@
 #include "cache.h"
 
 #include <errno.h>
+#include <malloc.h>
 #include <stdatomic.h>
-#include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/time.h>
 #include <unistd.h>
-#include <stdio.h>
 
 #include "log.h"
 
@@ -32,11 +32,8 @@ struct cache_t {
 };
 
 static cache_node_t *cache_node_create(cache_entry_t *entry);
-
 static void cache_node_destroy(cache_node_t *node);
-
 static int hash(const char *request, size_t request_len, int size);
-
 static void *garbage_collector_routine(void *arg);
 
 cache_t *cache_create(int capacity, time_t cache_expired_time_ms) {

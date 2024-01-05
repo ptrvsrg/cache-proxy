@@ -1,13 +1,11 @@
 #include "log.h"
 
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
-#include <time.h>
-#include <unistd.h>
-#include <pthread.h>
 
 #define COLOR_RESET     "\033[0m"
 #define COLOR_WHITE     "\033[1;37m"
@@ -22,7 +20,6 @@
 static int log_level = LOG_LEVEL_DEFAULT;
 
 static int check_log_level(int log_level_);
-
 static void log_common(const char *log_level_, const char *color, const char *format, va_list args, char *msg);
 
 void log_set_level(int log_level_) {
