@@ -81,8 +81,6 @@ cache_entry_t *cache_get(cache_t *cache, const char *request, size_t request_len
     cache_node_t *curr = cache->array[index];
     pthread_spin_unlock(&cache->lock);
 
-    if (curr == NULL) return NULL;
-
     cache_node_t *prev = NULL;
     while (curr != NULL) {
         pthread_rwlock_rdlock(&curr->lock);
