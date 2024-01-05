@@ -108,6 +108,7 @@ void cache_add(cache_t *cache, cache_entry_t *entry) {
         return;
     }
 
+    pthread_spin_lock(&cache->lock);
     cache_node_t *node = cache_node_create(entry);
     if (node == NULL) return;
 
@@ -119,7 +120,6 @@ void cache_add(cache_t *cache, cache_entry_t *entry) {
     node->next = cache->array[index];
     pthread_rwlock_unlock(&node->lock);
 
-    pthread_spin_lock(&cache->lock);
     cache->array[index] = node;
     pthread_spin_unlock(&cache->lock);
 
