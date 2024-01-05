@@ -405,7 +405,7 @@ static int receive_and_send_message(int ifd, int ofd, message_t **message) {
         if (read_bytes == ERROR) return ERROR;
         if (read_bytes == 0) break;
 
-        ssize_t written_bytes = send_with_timeout(ofd, buf, BUFFER_SIZE);
+        ssize_t written_bytes = send_with_timeout(ofd, buf, read_bytes);
         if (written_bytes == ERROR) return ERROR;
 
         message_add_part(message, buf, read_bytes);
