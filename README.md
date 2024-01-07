@@ -2,19 +2,19 @@
 
 <p align="center">
    <a href="https://github.com/ptrvsrg/cache-proxy/graphs/contributors">
-        <img alt="GitHub contributors" src="https://img.shields.io/github/contributors/ptrvsrg/cache-proxy?label=Contributors&labelColor=222222&color=77D4FC"/>
+        <img alt="GitHub contributors" src="https://img.shields.io/github/contributors/ptrvsrg/cache-proxy?style=flat&label=Contributors&labelColor=222222&color=77D4FC"/>
    </a>
    <a href="https://github.com/ptrvsrg/cache-proxy/forks">
-        <img alt="GitHub forks" src="https://img.shields.io/github/forks/ptrvsrg/cache-proxy?label=Forks&labelColor=222222&color=77D4FC"/>
+        <img alt="GitHub forks" src="https://img.shields.io/github/forks/ptrvsrg/cache-proxy?style=flat&label=Forks&labelColor=222222&color=77D4FC"/>
    </a>
    <a href="https://github.com/ptrvsrg/cache-proxy/stargazers">
-        <img alt="GitHub Repo stars" src="https://img.shields.io/github/stars/ptrvsrg/cache-proxy?label=Stars&labelColor=222222&color=77D4FC"/>
+        <img alt="GitHub Repo stars" src="https://img.shields.io/github/stars/ptrvsrg/cache-proxy?style=flat&label=Stars&labelColor=222222&color=77D4FC"/>
    </a>
    <a href="https://github.com/ptrvsrg/cache-proxy/issues">
-        <img alt="GitHub issues" src="https://img.shields.io/github/issues/ptrvsrg/cache-proxy?label=Issues&labelColor=222222&color=77D4FC"/>
+        <img alt="GitHub issues" src="https://img.shields.io/github/issues/ptrvsrg/cache-proxy?style=flat&label=Issues&labelColor=222222&color=77D4FC"/>
    </a>
    <a href="https://github.com/ptrvsrg/cache-proxy/pulls">
-        <img alt="GitHub pull requests" src="https://img.shields.io/github/issues-pr/ptrvsrg/cache-proxy?label=Pull%20Requests&labelColor=222222&color=77D4FC"/>
+        <img alt="GitHub pull requests" src="https://img.shields.io/github/issues-pr/ptrvsrg/cache-proxy?style=flat&label=Pull%20Requests&labelColor=222222&color=77D4FC"/>
    </a>
 </p>
 
@@ -43,8 +43,8 @@
     ```shell
    make run PORT=<int>
    ```
-   
-    или
+
+   или
 
     ```shell
    ./build/cache-proxy <int>
