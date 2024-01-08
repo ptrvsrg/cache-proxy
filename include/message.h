@@ -3,6 +3,9 @@
 
 #include <stddef.h>
 
+#define SUCCESS 0
+#define ERROR   (-1)
+
 struct message_t {
     char *part;
     size_t part_len;
