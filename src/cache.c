@@ -15,7 +15,7 @@
 typedef struct cache_node_t {
     cache_entry_t *entry;
     struct timeval last_modified_time;
-    pthread_rwlock_t lock;
+    pthread_rwlock_t rwlock;
     struct cache_node_t *next;
 } cache_node_t;
 
@@ -82,18 +82,18 @@ cache_entry_t *cache_get(cache_t *cache, const char *request, size_t request_len
     // Find entry
     cache_node_t *prev = NULL;
     while (curr != NULL) {
-        pthread_rwlock_rdlock(&curr->lock);
+        pthread_rwlock_rdlock(&curr->rwlock);
 
         if (curr->entry->request_len == request_len && strncmp(curr->entry->request, request, request_len) == 0) {
             // Update time
             gettimeofday(&curr->last_modified_time, 0);
-            pthread_rwlock_unlock(&curr->lock);
+            pthread_rwlock_unlock(&curr->rwlock);
             return curr->entry;
         }
 
         prev = curr;
         curr = curr->next;
-        pthread_rwlock_unlock(&prev->lock);
+        pthread_rwlock_unlock(&prev->rwlock);
     }
     return NULL;
 }
@@ -113,14 +113,12 @@ int cache_add(cache_t *cache, cache_entry_t *entry) {
     if (node == NULL) return ERROR;
 
     // Get hash basket
-    pthread_rwlock_rdlock(&entry->lock);
     int index = hash(entry->request, entry->request_len, cache->capacity);
-    pthread_rwlock_unlock(&entry->lock);
 
     // Add entry
-    pthread_rwlock_wrlock(&node->lock);
+    pthread_rwlock_wrlock(&node->rwlock);
     node->next = cache->array[index];
-    pthread_rwlock_unlock(&node->lock);
+    pthread_rwlock_unlock(&node->rwlock);
 
     cache->array[index] = node;
 
@@ -143,7 +141,7 @@ int cache_delete(cache_t *cache, const char *request, size_t request_len) {
     // Find entry
     cache_node_t *prev = NULL;
     while (curr != NULL) {
-        pthread_rwlock_rdlock(&curr->lock);
+        pthread_rwlock_rdlock(&curr->rwlock);
 
         // Delete entry
         if (curr->entry->request_len == request_len && strncmp(curr->entry->request, request, request_len) == 0) {
@@ -151,12 +149,12 @@ int cache_delete(cache_t *cache, const char *request, size_t request_len) {
                 cache_node_t *next = curr->next;
                 if (next == NULL) cache->array[index] = NULL;
             } else {
-                pthread_rwlock_wrlock(&prev->lock);
+                pthread_rwlock_wrlock(&prev->rwlock);
                 prev->next = curr->next;
-                pthread_rwlock_unlock(&prev->lock);
+                pthread_rwlock_unlock(&prev->rwlock);
             }
 
-            pthread_rwlock_unlock(&curr->lock);
+            pthread_rwlock_unlock(&curr->rwlock);
             cache_node_destroy(curr);
             log_debug("Cache entry destroy");
             return SUCCESS;
@@ -165,7 +163,7 @@ int cache_delete(cache_t *cache, const char *request, size_t request_len) {
         prev = curr;
         curr = curr->next;
 
-        pthread_rwlock_unlock(&prev->lock);
+        pthread_rwlock_unlock(&prev->rwlock);
     }
 
     return NOT_FOUND;
@@ -213,7 +211,7 @@ static cache_node_t *cache_node_create(cache_entry_t *entry) {
 
     node->entry = entry;
     gettimeofday(&node->last_modified_time, 0);
-    pthread_rwlock_init(&node->lock, NULL);
+    pthread_rwlock_init(&node->rwlock, NULL);
     node->next = NULL;
 
     return node;
@@ -225,7 +223,7 @@ static void cache_node_destroy(cache_node_t *node) {
         return;
     }
     cache_entry_destroy(node->entry);
-    pthread_rwlock_destroy(&node->lock);
+    pthread_rwlock_destroy(&node->rwlock);
     free(node);
 }
 
@@ -249,7 +247,7 @@ static void *garbage_collector_routine(void *arg) {
 
             if (curr == NULL) continue;
 
-            pthread_rwlock_rdlock(&curr->lock);
+            pthread_rwlock_rdlock(&curr->rwlock);
 
             cache_node_t *next = NULL;
             while (curr != NULL) {
@@ -258,17 +256,17 @@ static void *garbage_collector_routine(void *arg) {
                         (curr_time.tv_usec - curr->last_modified_time.tv_usec) / 1000;
                 if (diff >= cache->entry_expired_time_ms) {
                     // Delete entry
-                    pthread_rwlock_rdlock(&curr->lock);
+                    pthread_rwlock_rdlock(&curr->rwlock);
                     next = curr->next;
                     char *request = curr->entry->request;
                     size_t request_len = curr->entry->request_len;
-                    pthread_rwlock_unlock(&curr->lock);
+                    pthread_rwlock_unlock(&curr->rwlock);
 
                     cache_delete(cache, request, request_len);
                 } else {
-                    pthread_rwlock_rdlock(&curr->lock);
+                    pthread_rwlock_rdlock(&curr->rwlock);
                     next = curr->next;
-                    pthread_rwlock_unlock(&curr->lock);
+                    pthread_rwlock_unlock(&curr->rwlock);
                 }
 
                 curr = next;

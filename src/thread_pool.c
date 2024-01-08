@@ -28,8 +28,8 @@ struct thread_pool_t {
     int front;
     int rear;
     pthread_mutex_t mutex;
-    pthread_cond_t not_empty;
-    pthread_cond_t not_full;
+    pthread_cond_t not_empty_cond;
+    pthread_cond_t not_full_cond;
 
     // Executors
     pthread_t *executors;
@@ -66,8 +66,8 @@ thread_pool_t * thread_pool_create(int executor_count, int task_queue_capacity) 
     pool->num_executors = executor_count;
 
     pthread_mutex_init(&pool->mutex, NULL);
-    pthread_cond_init(&pool->not_empty, NULL);
-    pthread_cond_init(&pool->not_full, NULL);
+    pthread_cond_init(&pool->not_empty_cond, NULL);
+    pthread_cond_init(&pool->not_full_cond, NULL);
 
     errno = 0;
     pool->executors = calloc(sizeof(pthread_t), executor_count);
@@ -76,8 +76,8 @@ thread_pool_t * thread_pool_create(int executor_count, int task_queue_capacity) 
         else log_error("Thread pool creation error: failed to reallocate memory");
 
         pthread_mutex_destroy(&pool->mutex);
-        pthread_cond_destroy(&pool->not_empty);
-        pthread_cond_destroy(&pool->not_full);
+        pthread_cond_destroy(&pool->not_empty_cond);
+        pthread_cond_destroy(&pool->not_full_cond);
         free(pool);
         return NULL;
     }
@@ -102,7 +102,7 @@ void thread_pool_execute(thread_pool_t *pool, routine_t routine, void *arg) {
     pthread_mutex_lock(&pool->mutex);
 
     // Wait until the queue is not full
-    while (pool->size == pool->capacity && !pool->shutdown) pthread_cond_wait(&pool->not_full, &pool->mutex);
+    while (pool->size == pool->capacity && !pool->shutdown) pthread_cond_wait(&pool->not_full_cond, &pool->mutex);
 
     // Exit check
     if (pool->shutdown) {
@@ -118,7 +118,7 @@ void thread_pool_execute(thread_pool_t *pool, routine_t routine, void *arg) {
     pool->size++;
 
     // Signaling that the queue is not empty
-    pthread_cond_signal(&pool->not_empty);
+    pthread_cond_signal(&pool->not_empty_cond);
 
     pthread_mutex_unlock(&pool->mutex);
 }
@@ -127,8 +127,8 @@ void thread_pool_shutdown(thread_pool_t *pool) {
     pool->shutdown = 1;
 
     // Wake up all the streams
-    pthread_cond_broadcast(&pool->not_empty);
-    pthread_cond_broadcast(&pool->not_full);
+    pthread_cond_broadcast(&pool->not_empty_cond);
+    pthread_cond_broadcast(&pool->not_full_cond);
 
     // Wait for all threads to complete
     for (int i = 0; i < pool->num_executors; i++) pthread_join(pool->executors[i], NULL);
@@ -137,8 +137,8 @@ void thread_pool_shutdown(thread_pool_t *pool) {
     free(pool->executors);
 
     pthread_mutex_destroy(&pool->mutex);
-    pthread_cond_destroy(&pool->not_empty);
-    pthread_cond_destroy(&pool->not_full);
+    pthread_cond_destroy(&pool->not_empty_cond);
+    pthread_cond_destroy(&pool->not_full_cond);
 
     free(pool);
 }
@@ -149,7 +149,7 @@ static void *executor_routine(void *arg) {
         pthread_mutex_lock(&pool->mutex);
 
         // Wait until the queue is empty
-        while (pool->size == 0 && !pool->shutdown) pthread_cond_wait(&pool->not_empty, &pool->mutex);
+        while (pool->size == 0 && !pool->shutdown) pthread_cond_wait(&pool->not_empty_cond, &pool->mutex);
 
         // Exit check
         if (pool->shutdown) {
@@ -163,7 +163,7 @@ static void *executor_routine(void *arg) {
         pool->size--;
 
         // Signaling that the queue is not full
-        pthread_cond_signal(&pool->not_full);
+        pthread_cond_signal(&pool->not_full_cond);
 
         pthread_mutex_unlock(&pool->mutex);
 

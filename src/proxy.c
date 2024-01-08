@@ -54,7 +54,7 @@ static int check_response(int status);
 struct proxy_t {
     // Cache
     cache_t *cache;
-    pthread_mutex_t lock;
+    pthread_mutex_t cache_mutex;
 
     // Handlers
     thread_pool_t *handlers;
@@ -91,7 +91,7 @@ proxy_t *proxy_create(int handler_count, time_t cache_expired_time_ms) {
         return NULL;
     }
 
-    pthread_mutex_init(&proxy->lock, NULL);
+    pthread_mutex_init(&proxy->cache_mutex, NULL);
 
     proxy->running = 1;
 
@@ -153,7 +153,7 @@ void proxy_destroy(proxy_t *proxy) {
 
     log_debug("Destroy cache");
     cache_destroy(proxy->cache);
-    pthread_mutex_destroy(&proxy->lock);
+    pthread_mutex_destroy(&proxy->cache_mutex);
 
     log_debug("Destroy proxy");
     free(proxy);
@@ -267,7 +267,7 @@ static void handle_client(void *arg) {
     // Create cache entry
     cache_entry_t *entry = NULL;
     if (check_request(method, method_len)) {
-        pthread_mutex_lock(&ctx->proxy->lock);
+        pthread_mutex_lock(&ctx->proxy->cache_mutex);
 
         entry = cache_get(ctx->proxy->cache, request, request_len);
         if (entry != NULL) {
@@ -288,12 +288,12 @@ static void handle_client(void *arg) {
         }
 
         if (cache_add(ctx->proxy->cache, entry) == ERROR) {
-            pthread_mutex_unlock(&ctx->proxy->lock);
+            pthread_mutex_unlock(&ctx->proxy->cache_mutex);
             cache_entry_destroy(entry);
             goto destroy_ctx;
         }
-        pthread_rwlock_wrlock(&entry->lock);
-        pthread_mutex_unlock(&ctx->proxy->lock);
+
+        pthread_mutex_unlock(&ctx->proxy->cache_mutex);
     }
 
     log_debug("Cache miss");
