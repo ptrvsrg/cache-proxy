@@ -39,6 +39,16 @@ int message_add_part(message_t **message, char *part, size_t part_len) {
     return 0;
 }
 
+size_t message_get_length(const message_t *message) {
+    size_t length = 0;
+    message_t *curr = (message_t *) message;
+    while (curr != NULL) {
+        length += curr->part_len;
+        curr = curr->next;
+    }
+    return length;
+}
+
 void message_destroy(message_t **message) {
     if (*message == NULL) {
         return;

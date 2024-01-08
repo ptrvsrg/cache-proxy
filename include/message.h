@@ -14,6 +14,7 @@ struct message_t {
 typedef struct message_t message_t;
 
 int message_add_part(message_t **message, char *part, size_t part_len);
+size_t message_get_length(const message_t *message);
 void message_destroy(message_t **message);
 
 #endif // CACHE_PROXY_MESSAGE_H
