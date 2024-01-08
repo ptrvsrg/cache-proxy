@@ -117,6 +117,7 @@ int cache_add(cache_t *cache, cache_entry_t *entry) {
     int index = hash(entry->request, entry->request_len, cache->capacity);
     pthread_rwlock_unlock(&entry->lock);
 
+    // Add entry
     pthread_rwlock_wrlock(&node->lock);
     node->next = cache->array[index];
     pthread_rwlock_unlock(&node->lock);
@@ -142,7 +143,10 @@ int cache_delete(cache_t *cache, const char *request, size_t request_len) {
     // Find entry
     cache_node_t *prev = NULL;
     while (curr != NULL) {
-        if (strncmp(curr->entry->request, request, request_len) == 0) {
+        pthread_rwlock_rdlock(&curr->lock);
+
+        // Delete entry
+        if (curr->entry->request_len == request_len && strncmp(curr->entry->request, request, request_len) == 0) {
             if (prev == NULL) {
                 cache_node_t *next = curr->next;
                 if (next == NULL) cache->array[index] = NULL;
@@ -220,7 +224,6 @@ static void cache_node_destroy(cache_node_t *node) {
         log_error("Cache node destroying error: node is NULL");
         return;
     }
-
     cache_entry_destroy(node->entry);
     pthread_rwlock_destroy(&node->lock);
     free(node);
@@ -236,6 +239,7 @@ static void *garbage_collector_routine(void *arg) {
 
     struct timeval curr_time;
     while (cache->garbage_collector_running) {
+        // Sleep
         usleep(MIN(1000 * cache->entry_expired_time_ms / 2, 1000000));
         log_trace("Garbage collector running");
 
@@ -249,9 +253,11 @@ static void *garbage_collector_routine(void *arg) {
 
             cache_node_t *next = NULL;
             while (curr != NULL) {
+                // Check last modified time
                 time_t diff = (curr_time.tv_sec - curr->last_modified_time.tv_sec) * 1000 +
                         (curr_time.tv_usec - curr->last_modified_time.tv_usec) / 1000;
                 if (diff >= cache->entry_expired_time_ms) {
+                    // Delete entry
                     pthread_rwlock_rdlock(&curr->lock);
                     next = curr->next;
                     char *request = curr->entry->request;
