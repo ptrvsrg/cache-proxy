@@ -64,6 +64,8 @@ void message_destroy(message_t **message) {
     while (curr != NULL) {
         tmp = curr;
         curr = curr->next;
+
+        free(tmp->part);
         free(tmp);
     }
 
