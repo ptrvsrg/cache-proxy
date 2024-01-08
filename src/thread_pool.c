@@ -139,6 +139,8 @@ void thread_pool_shutdown(thread_pool_t *pool) {
     pthread_mutex_destroy(&pool->mutex);
     pthread_cond_destroy(&pool->not_empty);
     pthread_cond_destroy(&pool->not_full);
+
+    free(pool);
 }
 
 static void *executor_routine(void *arg) {
