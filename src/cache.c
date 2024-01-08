@@ -23,7 +23,6 @@ struct cache_t {
     // Hash map
     int capacity;
     cache_node_t **array;
-    pthread_spinlock_t lock;
 
     // Garbage collector
     atomic_int garbage_collector_running;
