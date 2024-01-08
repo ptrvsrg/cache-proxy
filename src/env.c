@@ -36,6 +36,7 @@ int env_get_client_handler_count() {
         return HANDLER_COUNT_DEFAULT;
     }
 
+    // Convert string to int
     errno = 0;
     char *end;
     int handler_count = (int) strtol(handler_count_env, &end, 0);
@@ -58,6 +59,7 @@ time_t env_get_cache_expired_time_ms() {
         return CACHE_EXPIRED_TIME_MS_DEFAULT;
     }
 
+    // Convert string to time_t
     errno = 0;
     char *end;
     time_t cache_expired_time_ms = strtol(cache_expired_time_ms_env, &end, 0);
