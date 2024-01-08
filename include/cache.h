@@ -2,6 +2,7 @@
 #define CACHE_PROXY_CACHE_H
 
 #include <pthread.h>
+#include <stdatomic.h>
 
 #include "message.h"
 
