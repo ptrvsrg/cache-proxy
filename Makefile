@@ -24,9 +24,7 @@ run:
 
 .PHONY: test
 test:
-	@cd test
-	@bash tests.sh
-	@cd ../
+	@bash test/tests.sh
 
 .PHONY: help
 help:
