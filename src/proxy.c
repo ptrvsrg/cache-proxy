@@ -45,8 +45,14 @@ static int need_cache(const char *method, size_t method_len);
 static int connect_to_remote(char *host, size_t host_len);
 
 struct proxy_t {
+    // Cache
     cache_t *cache;
+    pthread_mutex_t lock;
+
+    // Handlers
     thread_pool_t *handlers;
+
+    // State
     atomic_int running;
 };
 
@@ -77,6 +83,8 @@ proxy_t *proxy_create(int handler_count, time_t cache_expired_time_ms) {
         free(proxy);
         return NULL;
     }
+
+    pthread_mutex_init(&proxy->lock, NULL);
 
     proxy->running = 1;
 
@@ -133,9 +141,7 @@ void proxy_destroy(proxy_t *proxy) {
 
     log_debug("Destroy cache");
     cache_destroy(proxy->cache);
-
-    log_debug("Destroy handlers");
-    thread_pool_shutdown(proxy->handlers);
+    pthread_mutex_destroy(&proxy->lock);
 
     log_debug("Destroy proxy");
     free(proxy);

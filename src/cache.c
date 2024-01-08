@@ -31,9 +31,9 @@ struct cache_t {
     pthread_t garbage_collector;
 };
 
+static int hash(const char *request, size_t request_len, int size);
 static cache_node_t *cache_node_create(cache_entry_t *entry);
 static void cache_node_destroy(cache_node_t *node);
-static int hash(const char *request, size_t request_len, int size);
 static void *garbage_collector_routine(void *arg);
 
 cache_t *cache_create(int capacity, time_t cache_expired_time_ms) {
@@ -59,7 +59,8 @@ cache_t *cache_create(int capacity, time_t cache_expired_time_ms) {
         return NULL;
     }
     for (int i = 0; i < capacity; i++) cache->array[i] = NULL;
-    pthread_spin_init(&cache->lock, PTHREAD_PROCESS_PRIVATE);
+
+    // Start garbage collector
     pthread_create(&cache->garbage_collector, NULL, garbage_collector_routine, cache);
 
     char thread_name[16];
@@ -75,12 +76,11 @@ cache_entry_t *cache_get(cache_t *cache, const char *request, size_t request_len
         return NULL;
     }
 
+    // Get hash basket
     int index = hash(request, request_len, cache->capacity);
-
-    pthread_spin_lock(&cache->lock);
     cache_node_t *curr = cache->array[index];
-    pthread_spin_unlock(&cache->lock);
 
+    // Find entry
     cache_node_t *prev = NULL;
     while (curr != NULL) {
         pthread_rwlock_rdlock(&curr->lock);
@@ -108,7 +108,7 @@ void cache_add(cache_t *cache, cache_entry_t *entry) {
         return;
     }
 
-    pthread_spin_lock(&cache->lock);
+    // Create node
     cache_node_t *node = cache_node_create(entry);
     if (node == NULL) return;
 
@@ -121,7 +121,6 @@ void cache_add(cache_t *cache, cache_entry_t *entry) {
     pthread_rwlock_unlock(&node->lock);
 
     cache->array[index] = node;
-    pthread_spin_unlock(&cache->lock);
 
     log_debug("Add new cache entry");
 }
@@ -133,10 +132,7 @@ void cache_delete(cache_t *cache, const char *request, size_t request_len) {
     }
 
     int index = hash(request, request_len, cache->capacity);
-
-    pthread_spin_lock(&cache->lock);
     cache_node_t *curr = cache->array[index];
-    pthread_spin_unlock(&cache->lock);
 
     if (curr == NULL) return;
 
@@ -147,12 +143,7 @@ void cache_delete(cache_t *cache, const char *request, size_t request_len) {
         if (strncmp(curr->entry->request, request, request_len) == 0) {
             if (prev == NULL) {
                 cache_node_t *next = curr->next;
-
-                if (next == NULL) {
-                    pthread_spin_lock(&cache->lock);
-                    cache->array[index] = NULL;
-                    pthread_spin_unlock(&cache->lock);
-                }
+                if (next == NULL) cache->array[index] = NULL;
             } else {
                 pthread_rwlock_wrlock(&prev->lock);
                 prev->next = curr->next;
@@ -183,7 +174,6 @@ void cache_destroy(cache_t *cache) {
     cache->garbage_collector_running = 0;
     pthread_join(cache->garbage_collector, NULL);
 
-    pthread_spin_lock(&cache->lock);
     for (int i = 0; i < cache->capacity; i++) {
         cache_node_t *curr = cache->array[i];
         while (curr != NULL) {
@@ -192,9 +182,7 @@ void cache_destroy(cache_t *cache) {
             curr = next;
         }
     }
-    pthread_spin_unlock(&cache->lock);
 
-    pthread_spin_destroy(&cache->lock);
     free(cache->array);
     free(cache);
 }
@@ -249,9 +237,7 @@ static void *garbage_collector_routine(void *arg) {
 
         gettimeofday(&curr_time, 0);
         for (int i = 0; i < cache->capacity; i++) {
-            pthread_spin_lock(&cache->lock);
             cache_node_t *curr = cache->array[i];
-            pthread_spin_unlock(&cache->lock);
 
             if (curr == NULL) continue;
 
