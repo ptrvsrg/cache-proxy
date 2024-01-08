@@ -18,7 +18,10 @@ cache_entry_t *cache_entry_create(const char *request, size_t request_len, const
     entry->request = (char *) request;
     entry->request_len = request_len;
     entry->response = (message_t *) response;
-    pthread_rwlock_init(&entry->lock, NULL);
+
+    pthread_mutex_init(&entry->mutex, NULL);
+    pthread_cond_init(&entry->ready_cond, NULL);
+    entry->deleted = 0;
 
     return entry;
 }
@@ -29,11 +32,11 @@ void cache_entry_destroy(cache_entry_t *entry) {
         return;
     }
 
-    pthread_rwlock_destroy(&entry->lock);
-    if (entry->request != NULL) {
-        free(entry->request);
-        entry->request = NULL;
-    }
+    if (entry->request != NULL) free(entry->request);
     if (entry->response != NULL) message_destroy(&entry->response);
+
+    pthread_mutex_destroy(&entry->mutex);
+    pthread_cond_destroy(&entry->ready_cond);
+
     free(entry);
 }

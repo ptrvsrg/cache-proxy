@@ -51,6 +51,8 @@ static int parse_response(const char *response, size_t response_len, int *status
 static int check_request(const char *method, size_t method_len);
 static int check_response(int status);
 
+static cache_entry_t *find_cache_entry(cache_t *cache, const char *request, size_t request_len);
+
 struct proxy_t {
     // Cache
     cache_t *cache;
@@ -261,29 +263,25 @@ static void handle_client(void *arg) {
     // Parse request
     char *method, *host_port;
     size_t method_len, host_len;
-    if (parse_request(request, request_len, (const char **) &method, &method_len, (const char **)
-                      &host_port, &host_len) == ERROR) goto destroy_ctx;
+    if (parse_request(request, request_len, (const char **) &method, &method_len, (const char **) &host_port, &host_len) == ERROR) goto destroy_ctx;
 
-    // Create cache entry
     cache_entry_t *entry = NULL;
     if (check_request(method, method_len)) {
         pthread_mutex_lock(&ctx->proxy->cache_mutex);
 
-        entry = cache_get(ctx->proxy->cache, request, request_len);
+        // Find entry
+        entry = find_cache_entry(ctx->proxy->cache, request, request_len);
         if (entry != NULL) {
-            if (entry->response == NULL) {
-                pthread_rwlock_rdlock(&entry->lock);
-                pthread_rwlock_unlock(&entry->lock);
-            }
             log_debug("Cache hit");
             send_message(ctx->client_socket, entry->response);
-            pthread_mutex_unlock(&ctx->proxy->lock);
+            pthread_mutex_unlock(&ctx->proxy->cache_mutex);
             goto destroy_ctx;
         }
 
+        // Create and add new entry
         entry = cache_entry_create(request, request_len, NULL);
         if (entry == NULL) {
-            pthread_mutex_unlock(&ctx->proxy->lock);
+            pthread_mutex_unlock(&ctx->proxy->cache_mutex);
             goto destroy_ctx;
         }
 
@@ -342,9 +340,10 @@ static void handle_client(void *arg) {
     }
 
     // Upload response to cache
+    if (!check_response(status)) goto destroy_entry;
     if (check_request(method, method_len)) {
         entry->response = response;
-        pthread_rwlock_unlock(&entry->lock);
+        pthread_cond_broadcast(&entry->ready_cond);
         log_debug("Set response to entry");
     }
 
@@ -354,7 +353,13 @@ destroy_entry:
     if (check_request(method, method_len)) {
         size_t deleted_request_len = entry->request_len;
         char *deleted_request = entry->request;
-        pthread_rwlock_unlock(&entry->lock);
+
+        pthread_mutex_lock(&entry->mutex);
+        entry->deleted = 1;
+        pthread_mutex_unlock(&entry->mutex);
+
+        pthread_cond_broadcast(&entry->ready_cond);
+
         cache_delete(ctx->proxy->cache, deleted_request, deleted_request_len);
     }
 destroy_ctx:
@@ -709,4 +714,23 @@ static int check_request(const char *method, size_t method_len) {
 
 static int check_response(int status) {
     return status < 400;
+}
+
+//////// Cache ////////
+
+static cache_entry_t *find_cache_entry(cache_t *cache, const char *request, size_t request_len) {
+    cache_entry_t *entry = cache_get(cache, request, request_len);
+    if (entry == NULL) return NULL;
+
+    if (entry->response == NULL) {
+        pthread_mutex_lock(&entry->mutex);
+        while (entry->response == NULL && !entry->deleted) pthread_cond_wait(&entry->ready_cond, &entry->mutex);
+
+        if (entry->deleted) {
+            pthread_mutex_unlock(&entry->mutex);
+            return NULL;
+        }
+        pthread_mutex_unlock(&entry->mutex);
+    }
+    return entry;
 }

@@ -16,7 +16,9 @@ struct cache_entry_t {
     message_t *response;
 
     // Sync
-    pthread_rwlock_t lock;
+    pthread_mutex_t mutex;
+    pthread_cond_t ready_cond;
+    atomic_int deleted;
 };
 typedef struct cache_entry_t cache_entry_t;
 
