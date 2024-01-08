@@ -98,20 +98,21 @@ cache_entry_t *cache_get(cache_t *cache, const char *request, size_t request_len
     return NULL;
 }
 
-void cache_add(cache_t *cache, cache_entry_t *entry) {
+int cache_add(cache_t *cache, cache_entry_t *entry) {
     if (cache == NULL) {
         log_error("Cache adding error: cache is NULL");
-        return;
+        return ERROR;
     }
     if (entry == NULL) {
         log_error("Cache adding error: cache entry is NULL");
-        return;
+        return ERROR;
     }
 
     // Create node
     cache_node_t *node = cache_node_create(entry);
-    if (node == NULL) return;
+    if (node == NULL) return ERROR;
 
+    // Get hash basket
     pthread_rwlock_rdlock(&entry->lock);
     int index = hash(entry->request, entry->request_len, cache->capacity);
     pthread_rwlock_unlock(&entry->lock);
@@ -123,21 +124,22 @@ void cache_add(cache_t *cache, cache_entry_t *entry) {
     cache->array[index] = node;
 
     log_debug("Add new cache entry");
+    return SUCCESS;
 }
 
-void cache_delete(cache_t *cache, const char *request, size_t request_len) {
+int cache_delete(cache_t *cache, const char *request, size_t request_len) {
     if (cache == NULL) {
         log_error("Cache deleting error: cache is NULL");
-        return;
+        return ERROR;
     }
 
+    // Get hash basket
     int index = hash(request, request_len, cache->capacity);
     cache_node_t *curr = cache->array[index];
 
-    if (curr == NULL) return;
+    if (curr == NULL) return NOT_FOUND;
 
-    pthread_rwlock_rdlock(&curr->lock);
-
+    // Find entry
     cache_node_t *prev = NULL;
     while (curr != NULL) {
         if (strncmp(curr->entry->request, request, request_len) == 0) {
@@ -153,16 +155,16 @@ void cache_delete(cache_t *cache, const char *request, size_t request_len) {
             pthread_rwlock_unlock(&curr->lock);
             cache_node_destroy(curr);
             log_debug("Cache entry destroy");
-            return;
+            return SUCCESS;
         }
 
         prev = curr;
         curr = curr->next;
+
         pthread_rwlock_unlock(&prev->lock);
-        pthread_rwlock_rdlock(&curr->lock);
     }
 
-    pthread_rwlock_unlock(&curr->lock);
+    return NOT_FOUND;
 }
 
 void cache_destroy(cache_t *cache) {
