@@ -18,7 +18,7 @@ int message_add_part(message_t **message, char *part, size_t part_len) {
     if (part_msg == NULL) {
         if (errno == ENOMEM) log_error("Message part adding error: %s", strerror(errno));
         else log_error("Message part adding error: failed to reallocate memory");
-        return -1;
+        return ERROR;
     }
 
     errno = 0;
@@ -28,21 +28,22 @@ int message_add_part(message_t **message, char *part, size_t part_len) {
         else log_error("Message part adding error: failed to reallocate memory");
 
         free(part_msg);
-        return -1;
+        return ERROR;
     }
     strncpy(part_msg->part, part, part_len);
     part_msg->part_len = part_len;
     part_msg->next = NULL;
 
+    // Add node
     if (*message == NULL) {
         *message = part_msg;
-        return 0;
+        return SUCCESS;
     }
 
     message_t *end = *message;
     while (end->next != NULL) end = end->next;
     end->next = part_msg;
-    return 0;
+    return SUCCESS;
 }
 
 size_t message_get_length(const message_t *message) {
@@ -56,9 +57,7 @@ size_t message_get_length(const message_t *message) {
 }
 
 void message_destroy(message_t **message) {
-    if (*message == NULL) {
-        return;
-    }
+    if (*message == NULL) return;
 
     message_t *curr = *message, *tmp = NULL;
     while (curr != NULL) {
@@ -68,6 +67,5 @@ void message_destroy(message_t **message) {
         free(tmp->part);
         free(tmp);
     }
-
     *message = NULL;
 }
