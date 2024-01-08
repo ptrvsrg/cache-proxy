@@ -7,6 +7,12 @@
 #include "log.h"
 
 int message_add_part(message_t **message, char *part, size_t part_len) {
+    if (message == NULL) {
+        log_error("Message part adding error: message pointer is NULL");
+        return ERROR;
+    }
+
+    // Create node
     errno = 0;
     message_t *part_msg = malloc(sizeof(message_t));
     if (part_msg == NULL) {
