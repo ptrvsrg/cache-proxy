@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <regex.h>
 #include <signal.h>
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -17,32 +18,38 @@
 
 #include "picohttpparser.h"
 
-#define BUFFER_SIZE             1024
+#define BUFFER_SIZE             4096
 #define CACHE_CAPACITY          100
 #define TASK_QUEUE_CAPACITY     100
 #define MAX_USERS_COUNT         10
 #define ACCEPT_TIMEOUT_MS       1000
-#define READ_WRITE_TIMEOUT_MS   3000
+#define READ_WRITE_TIMEOUT_MS   10000
 
 #define SUCCESS             0
 #define ERROR               (-1)
 #define NO_CLIENT           (-2)
 
-static proxy_t *proxy_instance = NULL;
+static proxy_t *instance = NULL;
 
 static void termination_handler(__attribute__((unused)) int signal);
 static int create_server_socket(int port);
 static int accept_client(int server_socket);
 static void handle_client(void *arg);
+static int connect_to_remote(const char *host, int port);
+
 static ssize_t receive_with_timeout(int fd, char **data, size_t data_len);
 static ssize_t send_with_timeout(int fd, const char *data, size_t data_len);
-static int receive_full(int fd, char **data, size_t *data_len);
-static int send_full(int fd, const char *data, size_t data_len);
-static int send_message(int fd, const message_t *message);
-static int receive_and_send_message(int ifd, int ofd, message_t **message);
+static ssize_t receive_full_data(int fd, char **data);
+static ssize_t send_full_data(int fd, const char *data, size_t data_len);
+static ssize_t send_message(int fd, const message_t *message);
+static ssize_t receive_and_send_data(int ifd, int ofd, char **data);
+static ssize_t receive_and_send_message(int ifd, int ofd, message_t **message);
+
+static int get_host_port(const char *host_port, char *host, int *port);
 static int parse_request(const char *request, size_t request_len, const char **method, size_t *method_len, const char **host, size_t *host_len);
-static int need_cache(const char *method, size_t method_len);
-static int connect_to_remote(char *host, size_t host_len);
+static int parse_response(const char *response, size_t response_len, int *status, size_t *content_len, int *content_length_header);
+static int check_request(const char *method, size_t method_len);
+static int check_response(int status);
 
 struct proxy_t {
     // Cache
@@ -98,7 +105,7 @@ void proxy_start(proxy_t *proxy, int port) {
     }
 
     // Handle termination signal
-    proxy_instance = proxy;
+    instance = proxy;
     signal(SIGINT, termination_handler);
     signal(SIGTERM, termination_handler);
 
@@ -106,12 +113,13 @@ void proxy_start(proxy_t *proxy, int port) {
     int server_socket = create_server_socket(port);
     if (server_socket == ERROR) goto delete_proxy_instance;
 
-    // Accept and handle clients
     while (proxy->running) {
+        // Accept client
         int client_socket = accept_client(server_socket);
         if (client_socket == NO_CLIENT) continue;
         if (client_socket == ERROR) goto close_server_socket;
 
+        // Initialize context
         errno = 0;
         client_handler_context_t *ctx = malloc(sizeof(client_handler_context_t));
         if (ctx == NULL) {
@@ -124,13 +132,14 @@ void proxy_start(proxy_t *proxy, int port) {
         ctx->client_socket = client_socket;
         ctx->proxy = proxy;
 
+        // Handle client
         thread_pool_execute(proxy->handlers, handle_client, ctx);
     }
 
 close_server_socket:
     close(server_socket);
 delete_proxy_instance:
-    proxy_instance = NULL;
+    instance = NULL;
 }
 
 void proxy_destroy(proxy_t *proxy) {
@@ -139,17 +148,22 @@ void proxy_destroy(proxy_t *proxy) {
         return;
     }
 
+    log_debug("Destroy handlers");
+    thread_pool_shutdown(proxy->handlers);
+
     log_debug("Destroy cache");
     cache_destroy(proxy->cache);
     pthread_mutex_destroy(&proxy->lock);
 
     log_debug("Destroy proxy");
     free(proxy);
+
+    instance = NULL;
 }
 
 static void termination_handler(__attribute__((unused)) int signal) {
-    if (proxy_instance != NULL && proxy_instance->running) {
-        proxy_instance->running = 0;
+    if (instance != NULL && instance->running) {
+        instance->running = 0;
         log_info("Wait for the job to complete");
     }
 }
@@ -162,6 +176,7 @@ static int create_server_socket(int port) {
         return ERROR;
     }
 
+    // Reuse address
     int true = 1;
     setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &true, sizeof(int));
 
@@ -203,6 +218,7 @@ static int accept_client(int server_socket) {
     timeout.tv_sec = ACCEPT_TIMEOUT_MS / 1000;
     timeout.tv_usec = (ACCEPT_TIMEOUT_MS % 1000) * 1000;
 
+    // Wait event
     int ready = select(server_socket + 1, &read_fds, NULL, NULL, &timeout);
     if (ready == ERROR) {
         if (errno != EINTR) log_error("Accept client error: %s", strerror(errno));
@@ -231,54 +247,113 @@ static int accept_client(int server_socket) {
 }
 
 static void handle_client(void *arg) {
+    if (arg == NULL) {
+        log_error("Proxy error: client handler context is NULL");
+        return;
+    }
     client_handler_context_t *ctx = (client_handler_context_t *) arg;
 
     // Read request
     char *request = NULL;
-    size_t request_len = 0;
-    if (receive_full(ctx->client_socket, &request, &request_len) == ERROR) goto destroy_ctx;
+    size_t request_len = receive_full_data(ctx->client_socket, &request);
+    if (request_len == ERROR) goto destroy_ctx;
 
     // Parse request
-    char *method, *host;
+    char *method, *host_port;
     size_t method_len, host_len;
-    if (parse_request(request, request_len, (const char **) &method, &method_len, (const char **) &host, &host_len) == ERROR) goto destroy_ctx;
+    if (parse_request(request, request_len, (const char **) &method, &method_len, (const char **)
+                      &host_port, &host_len) == ERROR) goto destroy_ctx;
 
-    // Get response from cache
-    cache_entry_t *entry = cache_get(ctx->proxy->cache, request, request_len);
-    if (entry != NULL && entry->response != NULL) {
-        log_debug("Cache hit");
-        send_message(ctx->client_socket, entry->response);
-        free(request);
-        goto destroy_ctx;
+    // Create cache entry
+    cache_entry_t *entry = NULL;
+    if (check_request(method, method_len)) {
+        pthread_mutex_lock(&ctx->proxy->lock);
+
+        entry = cache_get(ctx->proxy->cache, request, request_len);
+        if (entry != NULL) {
+            if (entry->response == NULL) {
+                pthread_rwlock_rdlock(&entry->lock);
+                pthread_rwlock_unlock(&entry->lock);
+            }
+            log_debug("Cache hit");
+            send_message(ctx->client_socket, entry->response);
+            pthread_mutex_unlock(&ctx->proxy->lock);
+            goto destroy_ctx;
+        }
+
+        entry = cache_entry_create(request, request_len, NULL);
+        if (entry == NULL) {
+            log_error("======================================");
+            pthread_mutex_unlock(&ctx->proxy->lock);
+            goto destroy_ctx;
+        }
+
+        if (cache_add(ctx->proxy->cache, entry) == ERROR) {
+            log_error("======================================");
+            pthread_mutex_unlock(&ctx->proxy->lock);
+            cache_entry_destroy(entry);
+            goto destroy_ctx;
+        }
+        pthread_rwlock_wrlock(&entry->lock);
+        pthread_mutex_unlock(&ctx->proxy->lock);
     }
 
     log_debug("Cache miss");
 
-    // Load response to cache
-    if (need_cache(method, method_len)) {
-        entry = cache_entry_create(request, request_len, NULL);
-        cache_add(ctx->proxy->cache, entry);
-        pthread_rwlock_wrlock(&entry->lock);
-    }
+    // Connect to the remote host
+    char host_port1[BUFFER_SIZE];
+    strncpy(host_port1, host_port, host_len);
 
-    // Connect to the remote host, receive response and add to cache if necessary
-    int remote_socket = connect_to_remote(host, host_len);
+    char host[BUFFER_SIZE];
+    int port;
+    get_host_port(host_port1, host, &port);
+    int remote_socket = connect_to_remote(host, port);
     if (remote_socket == ERROR) goto destroy_entry;
 
-    if (send_full(remote_socket, request, request_len) == ERROR) goto destroy_entry;
+    // Send request
+    if (send_full_data(remote_socket, request, request_len) == ERROR) goto destroy_entry;
 
+    // Receive response
+    char *response_data = NULL;
+    ssize_t response_data_len = receive_and_send_data(remote_socket, ctx->client_socket, &response_data);
+    if (response_data_len == ERROR) {
+        if (response_data != NULL) free(response_data);
+        goto destroy_entry;
+    }
+
+    // Parse response
+    int status, content_length_header;
+    size_t content_len;
+    if (parse_response(response_data, response_data_len, &status, &content_len, &content_length_header) == ERROR) {
+        free(response_data);
+        goto destroy_entry;
+    }
+
+    // Create message
     message_t *response = NULL;
-    if (receive_and_send_message(remote_socket, ctx->client_socket, &response) == ERROR) goto destroy_entry;
+    message_add_part(&response, response_data, response_data_len);
 
-    if (need_cache(method, method_len)) {
+    // Receive remaining content if not received completely
+    while (content_len < content_length_header) {
+        response_data_len = receive_and_send_message(remote_socket, ctx->client_socket, &response);
+        if (response_data_len == ERROR) {
+            message_destroy(&response);
+            goto destroy_entry;
+        }
+        content_len += response_data_len;
+    }
+
+    // Upload response to cache
+    if (check_request(method, method_len)) {
         entry->response = response;
         pthread_rwlock_unlock(&entry->lock);
+        log_debug("Set response to entry");
     }
 
     goto destroy_ctx;
 
 destroy_entry:
-    if (need_cache(method, method_len)) {
+    if (check_request(method, method_len)) {
         size_t deleted_request_len = entry->request_len;
         char *deleted_request = entry->request;
         pthread_rwlock_unlock(&entry->lock);
@@ -288,6 +363,39 @@ destroy_ctx:
     close(ctx->client_socket);
     free(ctx);
 }
+
+static int connect_to_remote(const char *host, int port) {
+    // Resolve address
+    struct hostent *h = gethostbyname(host);
+    if (h == NULL) {
+        log_error("Connect to remote error: %s", hstrerror(h_errno));
+        return ERROR;
+    }
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_port = htons(port);
+    addr.sin_family = AF_INET;
+    memcpy(&addr.sin_addr, h->h_addr, h->h_length);
+
+    // Create socket
+    int remote_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (remote_socket == ERROR) {
+        log_error("Connect to remote error: %s", strerror(errno));
+        return ERROR;
+    }
+
+    // Connect to remote host
+    if (connect(remote_socket, (struct sockaddr *) &addr, sizeof(struct sockaddr_in)) == ERROR) {
+        log_error("Connect to remote error: %s", strerror(errno));
+        close(remote_socket);
+        return ERROR;
+    }
+
+    return remote_socket;
+}
+
+//////// Read / Write ////////
 
 static ssize_t receive_with_timeout(int fd, char **data, size_t data_len) {
     // Set timeout
@@ -310,13 +418,13 @@ static ssize_t receive_with_timeout(int fd, char **data, size_t data_len) {
     }
 
     // Receive
-    ssize_t read_bytes = recv(fd, data, data_len, 0);
-    if (read_bytes < 0) {
+    ssize_t received_bytes = recv(fd, data, data_len, 0);
+    if (received_bytes < 0) {
         log_error("Data receiving error: %s", strerror(errno));
         return ERROR;
     }
     log_trace("Received: %s", data);
-    return read_bytes;
+    return received_bytes;
 }
 
 static ssize_t send_with_timeout(int fd, const char *data, size_t data_len) {
@@ -340,27 +448,28 @@ static ssize_t send_with_timeout(int fd, const char *data, size_t data_len) {
     }
 
     // Send
-    ssize_t written_bytes = send(fd, data, data_len, 0);
-    if (written_bytes == ERROR) {
+    ssize_t sent_bytes = send(fd, data, data_len, 0);
+    if (sent_bytes == ERROR) {
         log_error("Data sending error: %s", strerror(errno));
         return ERROR;
     }
     log_trace("Sent: %s", data);
-    return written_bytes;
+    return sent_bytes;
 }
 
-static int receive_full(int fd, char **data, size_t *data_len) {
+static ssize_t receive_full_data(int fd, char **data) {
     *data = NULL;
 
-    ssize_t all_read_bytes = 0;
+    ssize_t all_received_bytes = 0;
     char buf[BUFFER_SIZE + 1];
     while (1) {
-        ssize_t read_bytes = receive_with_timeout(fd, (char **) &buf, BUFFER_SIZE);
-        if (read_bytes == ERROR) return ERROR;
-        if (read_bytes == 0) break;
+        memset(buf, 0, BUFFER_SIZE);
+        ssize_t received_bytes = receive_with_timeout(fd, (char **) &buf, BUFFER_SIZE);
+        if (received_bytes == ERROR) return ERROR;
+        if (received_bytes == 0) break;
 
-        all_read_bytes += read_bytes;
-        char *temp = realloc(*data, all_read_bytes + 1);
+        all_received_bytes += received_bytes;
+        char *temp = realloc(*data, all_received_bytes + 1);
         if (temp == NULL) {
             if (errno == ENOMEM) log_error("Data receiving error: %s", strerror(errno));
             else log_error("Data receiving error: failed to reallocate memory");
@@ -370,60 +479,151 @@ static int receive_full(int fd, char **data, size_t *data_len) {
             return ERROR;
         }
         *data = temp;
+        strncpy(*data + all_received_bytes - received_bytes, buf, received_bytes);
 
-        strncpy(*data + all_read_bytes - read_bytes, buf, read_bytes);
-
-        if (read_bytes < BUFFER_SIZE) break;
+        if (received_bytes < BUFFER_SIZE) break;
     }
 
-    *data_len = all_read_bytes;
-
-    return SUCCESS;
+    return all_received_bytes;
 }
 
-static int send_full(int fd, const char *data, size_t data_len) {
-    ssize_t all_written_bytes = 0;
+static ssize_t send_full_data(int fd, const char *data, size_t data_len) {
+    ssize_t all_sent_bytes = 0;
     while (1) {
-        ssize_t written_bytes = send_with_timeout(fd, data + all_written_bytes, data_len - all_written_bytes);
-        if (written_bytes == ERROR) return ERROR;
+        ssize_t sent_bytes = send_with_timeout(fd, data + all_sent_bytes, data_len - all_sent_bytes);
+        if (sent_bytes == ERROR) return ERROR;
 
-        all_written_bytes += written_bytes;
-        if ((size_t) all_written_bytes == data_len) break;
+        all_sent_bytes += sent_bytes;
+        if ((size_t) all_sent_bytes == data_len) break;
     }
 
-    return SUCCESS;
+    return all_sent_bytes;
 }
 
-static int send_message(int fd, const message_t *message) {
+static ssize_t send_message(int fd, const message_t *message) {
     message_t *curr = (message_t *) message;
+    ssize_t all_sent_bytes = 0;
     while (curr != NULL) {
-        if (send_full(fd, curr->part, curr->part_len) == ERROR) return ERROR;
+        ssize_t sent_bytes = send_full_data(fd, curr->part, curr->part_len);
+        if (sent_bytes == ERROR) return ERROR;
+        all_sent_bytes += sent_bytes;
         curr = curr->next;
     }
 
-    return SUCCESS;
+    return all_sent_bytes;
 }
 
-static int receive_and_send_message(int ifd, int ofd, message_t **message) {
+static ssize_t receive_and_send_data(int ifd, int ofd, char **data) {
     char buf[BUFFER_SIZE + 1];
+    ssize_t all_received_bytes = 0;
     while (1) {
-        ssize_t read_bytes = receive_with_timeout(ifd, (char **) &buf, BUFFER_SIZE);
-        if (read_bytes == ERROR) return ERROR;
-        if (read_bytes == 0) break;
+        memset(buf, 0, BUFFER_SIZE);
+        ssize_t received_bytes = receive_with_timeout(ifd, (char **) &buf, BUFFER_SIZE);
+        if (received_bytes == ERROR) return ERROR;
+        if (received_bytes == 0) break;
 
-        ssize_t written_bytes = send_with_timeout(ofd, buf, read_bytes);
-        if (written_bytes == ERROR) return ERROR;
+        ssize_t sent_bytes = send_with_timeout(ofd, buf, received_bytes);
+        if (sent_bytes == ERROR) return ERROR;
 
-        message_add_part(message, buf, read_bytes);
+        all_received_bytes += received_bytes;
+        char *temp = realloc(*data, all_received_bytes);
+        if (temp == NULL) {
+            if (errno == ENOMEM) log_error("Data receiving error: %s", strerror(errno));
+            else log_error("Data receiving error: failed to reallocate memory");
 
-        if (read_bytes < BUFFER_SIZE) break;
+            free(*data);
+            *data = NULL;
+            return ERROR;
+        }
+        *data = temp;
+        strncpy(*data + all_received_bytes - received_bytes, buf, received_bytes);
+
+        if (received_bytes < BUFFER_SIZE) break;
     }
 
-    return SUCCESS;
+    return all_received_bytes;
 }
 
-static int parse_request(const char *request, size_t request_len, const char **method, size_t *method_len,
-                         const char **host, size_t *host_len) {
+static ssize_t receive_and_send_message(int ifd, int ofd, message_t **message) {
+    char buf[BUFFER_SIZE + 1];
+    ssize_t all_sent_bytes = 0;
+    while (1) {
+        memset(buf, 0, BUFFER_SIZE);
+        ssize_t received_bytes = receive_with_timeout(ifd, (char **) &buf, BUFFER_SIZE);
+        if (received_bytes == ERROR) return ERROR;
+        if (received_bytes == 0) break;
+
+        ssize_t sent_bytes = send_with_timeout(ofd, buf, received_bytes);
+        if (sent_bytes == ERROR) return ERROR;
+
+        if (message_add_part(message, buf, received_bytes) == ERROR) return ERROR;
+        all_sent_bytes += sent_bytes;
+
+        if (received_bytes < BUFFER_SIZE) break;
+    }
+
+    return all_sent_bytes;
+}
+
+//////// Request / Response ////////
+
+static int get_host_port(const char *host_port, char *host, int *port) {
+    regex_t regex = {};
+    char *pattern = "^(http|https)?(://)?([^:/]+)(:([0-9]+))?";
+    regmatch_t match[6] = {};
+
+    int ret = regcomp(&regex, pattern, REG_EXTENDED);
+    if (ret != 0) {
+        log_error("Host and port getting error: failed to regex pattern compilation");
+        return ERROR;
+    }
+
+    ret = regexec(&regex, host_port, 6, match, 0);
+    if (ret == 0) {
+        // Get host
+        int host_start = match[3].rm_so;
+        int host_end = match[3].rm_eo;
+        strncpy(host, &host_port[host_start], host_end - host_start);
+        host[host_end - host_start] = '\0';
+
+        // Get port
+        int port_start = match[5].rm_so;
+        int port_end = match[5].rm_eo;
+        if (port_start != -1 && port_end != -1) {
+            char port_str[port_end - port_start + 1];
+            strncpy(port_str, &host_port[port_start], port_end - port_start);
+
+            errno = 0;
+            char *end;
+            *port = (int) strtol(port_str, &end, 0);
+            if (errno != 0) {
+                log_warning("Host and port getting error: %s", strerror(errno));
+                return ERROR;
+            }
+            if (end == port_str) {
+                log_warning("Host and port getting error: no digits were found");
+                return ERROR;
+            }
+        } else {
+            *port = (match[1].rm_so != -1 &&
+                     match[1].rm_eo != -1 &&
+                     strncmp("https", &host_port[match[1].rm_so], match[1].rm_eo - match[1].rm_so) == 0) ? 443 : 80;
+        }
+    } else if (ret == REG_NOMATCH) {
+        log_error("Host and port getting error: no host or/and port");
+        return ERROR;
+    } else {
+        char buf[BUFFER_SIZE];
+        regerror(ret, &regex, buf, BUFFER_SIZE);
+        log_error("Host and port getting error: %s", buf);
+        return ERROR;
+    }
+
+    regfree(&regex);
+    return 0;
+}
+
+static int parse_request(const char *request, size_t request_len, const char **method, size_t *method_len, const char **host, size_t *host_len) {
     char *path;
     struct phr_header headers[100];
     size_t path_len, num_headers = 100;
@@ -452,53 +652,63 @@ static int parse_request(const char *request, size_t request_len, const char **m
     return SUCCESS;
 }
 
-static int need_cache(const char *method, size_t method_len) {
+static int parse_response(const char *response, size_t response_len, int *status, size_t *content_len, int *content_length_header) {
+    const char *msg = NULL;
+    struct phr_header headers[100];
+    size_t msg_len = 0;
+    size_t num_headers = 100;
+    int minor_version = 0;
+    int pret = phr_parse_response(response, response_len, &minor_version, status, &msg, &msg_len, headers,
+                                  &num_headers, 0);
+    if (pret == -2) {
+        log_error("Response parsing error: response is partial");
+        return ERROR;
+    }
+    if (pret == -1) {
+        log_error("Response parsing error: failed");
+        return ERROR;
+    }
+
+    int content_length_idx = -1;
+    for (int i = 0; i < 100; ++i) {
+        if (strncmp(headers[i].name, "Content-Length", 14) == 0) {
+            content_length_idx = i;
+            break;
+        }
+    }
+    if (content_length_idx == -1) {
+        log_error("Response parsing error: Content-Length header not found");
+        return ERROR;
+    }
+
+    errno = 0;
+    char content_length_value[headers[content_length_idx].value_len + 1];
+    strncpy(content_length_value, headers[content_length_idx].value, headers[content_length_idx].value_len);
+    char *end = NULL;
+    *content_length_header = (int) strtol(content_length_value, &end, 0);
+    if (errno != 0) {
+        log_error("Response parsing error: %s", strerror(errno));
+        return ERROR;
+    }
+    if (end == content_length_value) {
+        log_error("Response parsing error: no digits were found");
+        return ERROR;
+    }
+
+    char *before_content = strstr(response, "\r\n\r\n");
+    if (before_content == NULL) {
+        log_warning("Response parsing error: no newlines before content");
+        return ERROR;
+    }
+    *content_len = response_len - (before_content + 4 - response);
+
+    return SUCCESS;
+}
+
+static int check_request(const char *method, size_t method_len) {
     return strncmp(method, "GET", method_len) == 0;
 }
 
-static int connect_to_remote(char *host, size_t host_len) {
-    // Get remote address
-    char *host1 = calloc(sizeof(char), host_len + 1);
-    if (host1 == NULL) return ERROR;
-    strncpy(host1, host, host_len);
-
-    short port;
-    char *port_str = strchr(host1, ':');
-    if (port_str == NULL) {
-        port = 80;
-    } else {
-        *port_str = 0;
-        port = (short) strtol(port_str + 1, NULL, 0);
-    }
-
-    struct hostent *h = gethostbyname(host1);
-    if (h == NULL) {
-        log_error("Connect to remote error: %s", hstrerror(h_errno));
-        free(host1);
-        return ERROR;
-    }
-
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_port = htons(port);
-    addr.sin_family = AF_INET;
-    memcpy(&addr.sin_addr, h->h_addr, h->h_length);
-
-    // Create socket
-    int remote_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (remote_socket == ERROR) {
-        log_error("Connect to remote error: %s", strerror(errno));
-        free(host1);
-        return ERROR;
-    }
-
-    // Connect to remote host
-    if (connect(remote_socket, (struct sockaddr *) &addr, sizeof(struct sockaddr_in)) == ERROR) {
-        log_error("Connect to remote error: %s", strerror(errno));
-        free(host1);
-        close(remote_socket);
-        return ERROR;
-    }
-
-    return remote_socket;
+static int check_response(int status) {
+    return status < 400;
 }
