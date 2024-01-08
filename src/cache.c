@@ -189,6 +189,14 @@ void cache_destroy(cache_t *cache) {
     free(cache);
 }
 
+static int hash(const char *request, size_t request_len, int size) {
+    if (request == NULL) return 0;
+
+    int hash_value = 0;
+    for (size_t i = 0; i < request_len; i++) hash_value = (hash_value * 31 + request[i]) % size;
+    return hash_value;
+}
+
 static cache_node_t *cache_node_create(cache_entry_t *entry) {
     errno = 0;
     cache_node_t *node = malloc(sizeof(cache_node_t));
@@ -214,14 +222,6 @@ static void cache_node_destroy(cache_node_t *node) {
 
     cache_entry_destroy(node->entry);
     pthread_rwlock_destroy(&node->lock);
-}
-
-static int hash(const char *request, size_t request_len, int size) {
-    if (request == NULL) return 0;
-
-    int hashValue = 0;
-    for (size_t i = 0; i < request_len; i++) hashValue += request[i];
-    return hashValue % size;
 }
 
 static void *garbage_collector_routine(void *arg) {
