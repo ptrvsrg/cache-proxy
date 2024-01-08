@@ -23,9 +23,6 @@ int main(int argc, char **argv) {
     time_t cache_expired_time_ms = env_get_cache_expired_time_ms();
 
     int port = get_port(argv[1]);
-    if (port == -1) {
-        return EXIT_FAILURE;
-    }
 
     proxy_t *proxy = proxy_create(handler_count, cache_expired_time_ms);
     proxy_start(proxy, port);
@@ -52,14 +49,7 @@ static int get_port(char *port_str) {
     errno = 0;
     char *end;
     int handler_count = (int) strtol(port_str, &end, 0);
-    if (errno != 0) {
-        log_error("Port getting error: %s", strerror(errno));
-        return -1;
-    }
-    if (end == port_str) {
-        log_error("Port getting error: no digits were found");
-        return -1;
-    }
-
+    if (errno != 0) log_fatal("Port getting error: %s", strerror(errno));
+    if (end == port_str) log_fatal("Port getting error: no digits were found");
     return handler_count;
 }
