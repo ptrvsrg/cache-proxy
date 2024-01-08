@@ -283,13 +283,11 @@ static void handle_client(void *arg) {
 
         entry = cache_entry_create(request, request_len, NULL);
         if (entry == NULL) {
-            log_error("======================================");
             pthread_mutex_unlock(&ctx->proxy->lock);
             goto destroy_ctx;
         }
 
         if (cache_add(ctx->proxy->cache, entry) == ERROR) {
-            log_error("======================================");
             pthread_mutex_unlock(&ctx->proxy->lock);
             cache_entry_destroy(entry);
             goto destroy_ctx;
