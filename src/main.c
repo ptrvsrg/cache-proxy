@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "env.h"
 #include "log.h"
@@ -25,7 +26,10 @@ int main(int argc, char **argv) {
     int port = get_port(argv[1]);
 
     proxy_t *proxy = proxy_create(handler_count, cache_expired_time_ms);
+
+    log_info("Proxy PID: %d", getpid());
     proxy_start(proxy, port);
+
     proxy_destroy(proxy);
 
     return EXIT_SUCCESS;
