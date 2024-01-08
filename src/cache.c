@@ -223,6 +223,7 @@ static void cache_node_destroy(cache_node_t *node) {
 
     cache_entry_destroy(node->entry);
     pthread_rwlock_destroy(&node->lock);
+    free(node);
 }
 
 static void *garbage_collector_routine(void *arg) {
