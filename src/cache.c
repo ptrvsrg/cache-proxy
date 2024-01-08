@@ -180,6 +180,7 @@ void cache_destroy(cache_t *cache) {
         cache_node_t *curr = cache->array[i];
         while (curr != NULL) {
             cache_node_t *next = curr->next;
+            log_debug("Delete entry: %s", curr->entry->request);
             cache_node_destroy(curr);
             curr = next;
         }
