@@ -84,7 +84,8 @@ cache_entry_t *cache_get(cache_t *cache, const char *request, size_t request_len
     while (curr != NULL) {
         pthread_rwlock_rdlock(&curr->lock);
 
-        if (strncmp(curr->entry->request, request, request_len) == 0) {
+        if (curr->entry->request_len == request_len && strncmp(curr->entry->request, request, request_len) == 0) {
+            // Update time
             gettimeofday(&curr->last_modified_time, 0);
             pthread_rwlock_unlock(&curr->lock);
             return curr->entry;
