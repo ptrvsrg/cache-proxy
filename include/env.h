@@ -1,7 +1,7 @@
 #ifndef CACHE_PROXY_ENV_H
 #define CACHE_PROXY_ENV_H
 
-#include <bits/types/time_t.h>
+#include <time.h>
 
 int env_get_log_level();
 int env_get_client_handler_count();

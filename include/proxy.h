@@ -1,7 +1,7 @@
 #ifndef CACHE_PROXY_PROXY_H
 #define CACHE_PROXY_PROXY_H
 
-#include <bits/types/time_t.h>
+#include <time.h>
 
 struct proxy_t;
 typedef struct proxy_t proxy_t;
