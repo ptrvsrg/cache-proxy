@@ -1,0 +1,66 @@
+name: Build, Test and Push image [release]
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  build_and_test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Check out the repo
+      uses: actions/checkout@v4
+      
+    - name: build
+      run: make build
+      
+    - name: test
+      run: |
+        CACHE_PROXY_THREAD_POOL_SIZE=4 \
+        CACHE_PROXY_LOG_LEVEL=DEBUG \
+        CACHE_PROXY_CACHE_EXPIRED_TIME_MS=86400000 \
+        ./build/cache-proxy 8080  > proxy.log 2>&1 &
+        PROXY_PID=$!
+        bash ./test/test.sh > test.log 2>&1
+        kill -INT $PROXY_PID
+        
+    - name: artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: logs
+        path: |
+          proxy.log
+          test.log
+          
+  push_image:
+    name: Push Latest Docker image
+    runs-on: ubuntu-latest
+    needs: build_and_test
+    
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+      
+      - name: Log in to Docker Hub
+        uses: docker/login-action@f4ef78c080cd8ba55a85445d5b36e214a81df20a
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe97b2010124a938b7
+        with:
+          images: ptrvsrg/cache-proxy
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@3b5e8027fcad23fda98b2e3ac259d8d67585f671
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: "ptrvsrg/cache-proxy:${{  github.ref_name }}"
+          labels: ${{ steps.meta.outputs.labels }}
