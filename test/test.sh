@@ -12,8 +12,10 @@ for i in $(seq 1 $TEST_COUNT); do \
   -e http_proxy="localhost:8080" \
   -O "./test_many_requests/$i.html" > /dev/null 2>&1 & \
 done
-wget "http://www.ccfit.nsu.ru/~rzheutskiy/test_files" \
-  -O "./test_many_requests/correct.html" > /dev/null 2>&1 &
+if [[ ! -e "./test_many_requests/correct.html" ]]; then
+  wget "http://www.ccfit.nsu.ru/~rzheutskiy/test_files" \
+    -O "./test_many_requests/correct.html" > /dev/null 2>&1 &
+fi
 wait
 echo "1. Checking..."
 SUCCESSFUL_TESTS=0
@@ -33,8 +35,10 @@ echo "1. Successful tests: $SUCCESSFUL_TESTS/$TEST_COUNT"
 echo "2. Test with big request"
 mkdir -p "test_big_request"
 echo "2. Sending..."
-wget "http://www.ccfit.nsu.ru/~rzheutskiy/test_files/50mb.dat" \
+if [[ ! -e "./test_big_request/correct.dat" ]]; then
+  wget "http://www.ccfit.nsu.ru/~rzheutskiy/test_files/50mb.dat" \
   -O "./test_big_request/correct.dat" > /dev/null 2>&1 &
+fi
 wget "http://www.ccfit.nsu.ru/~rzheutskiy/test_files/50mb.dat" \
   -e use_proxy=on \
   -e http_proxy="localhost:8080" \
